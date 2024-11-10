@@ -1,3 +1,4 @@
+mod args;
 mod error;
 mod test;
 
@@ -9,19 +10,24 @@ use std::{
     time::{Duration, Instant},
 };
 
+use args::get_args;
+use color_eyre::eyre::Result;
 use error::MainError;
-use fantoccini::{elements::Element, wd::Capabilities, Client, Locator};
+use fantoccini::{wd::Capabilities, Client, Locator};
 use serde_json::json;
+use spinners::{Spinner, Spinners};
 
 #[tokio::main]
-async fn main() -> Result<(), MainError> {
-    let start = Instant::now();
-    let _ = std::fs::create_dir("download");
+async fn main() -> Result<()> {
+    let args = get_args()?;
+    let _ = std::fs::create_dir("./download");
+
     let mut child = start_gd().expect("failed to start gecko driver");
     let c = start_client().await.expect("failed to start fantoccini");
 
-    let manga_v = get_manga_input().expect("failed to get user input");
-    c.goto(&manga_v).await?;
+    let start = Instant::now();
+    c.goto(&args.url).await?;
+    println!("\n\n goto: {}", &args.url);
 
     // First click
     let btn = c
@@ -30,35 +36,27 @@ async fn main() -> Result<(), MainError> {
         .await?;
     btn.click().await?;
 
-    // Handle the ad by closing the newly opened tab
-    let handles = c.windows().await?;
-    if handles.len() > 1 {
-        for handle in handles.iter().skip(1) {
-            c.switch_to_window(handle.clone()).await?;
-            c.close_window().await?;
-        }
-        c.switch_to_window(handles[0].clone()).await?;
-    }
+    close_open_window(&c).await?;
 
     // Second click
     btn.click().await?;
 
-    println!("\nbeginning download...");
-
+    println!("counting panels...");
     let ctr = extract_counter(&c).await? - 1;
 
-    println!("beginning loop...");
+    println!("beginning download...");
+    let mut sp = Spinner::new(Spinners::Dots, "Downloading...".into());
     for i in 0..ctr {
         download_panel_canvas(i, &c).await?;
         c.execute("hozNextImage()", vec![]).await?;
-        print!("\r{}/{ctr}", i + 1);
-        std::io::stdout().flush().unwrap();
+        // Update spinner message to show progress
     }
 
+    sp.stop();
     let elapsed = start.elapsed();
     println!("\nDownload complete in {:?}", elapsed);
 
-    //c.close().await?;
+    c.close().await?;
     child.kill().expect("failed to kill gecko driver.");
     Ok(())
 }
@@ -75,7 +73,7 @@ async fn download_img(index: u16, c: &Client) -> Result<(), MainError> {
         if let Some(img_url) = e.attr("src").await? {
             let res = reqwest::get(img_url).await?;
             let bytes = res.bytes().await?.to_vec();
-            let mut file = File::create(format!("download/{index}.png"))
+            let mut file = File::create(format!("./download/{index}.png"))
                 .expect("Failed to create screenshot file");
             file.write_all(&bytes)
                 .expect("Failed to write screenshot data");
@@ -85,7 +83,21 @@ async fn download_img(index: u16, c: &Client) -> Result<(), MainError> {
     Ok(())
 }
 
-async fn handle_popup(c: &Client) -> Result<(), MainError> {
+async fn close_open_window(c: &Client) -> Result<(), MainError> {
+    // Handle the ad by closing the newly opened tab
+    let handles = c.windows().await?;
+    if handles.len() > 1 {
+        for handle in handles.iter().skip(1) {
+            c.switch_to_window(handle.clone()).await?;
+            c.close_window().await?;
+        }
+        c.switch_to_window(handles[0].clone()).await?;
+    }
+
+    Ok(())
+}
+
+async fn _handle_popup(c: &Client) -> Result<(), MainError> {
     if let Ok(e) = c
         .find(Locator::Css("div[style*='z-index: 2147483647']"))
         .await
@@ -105,7 +117,7 @@ async fn handle_popup(c: &Client) -> Result<(), MainError> {
 }
 
 async fn start_client() -> Result<fantoccini::Client, fantoccini::error::NewSessionError> {
-    let caps: Capabilities = json!({
+    let _caps: Capabilities = json!({
         "moz:firefoxOptions": {
             "args": ["-headless"]
         }
@@ -173,7 +185,7 @@ async fn download_panel_canvas(index: u16, c: &Client) -> Result<(), MainError> 
 
         if canvas_ready {
             let ss = canvas.screenshot().await?;
-            let mut file = File::create(format!("download/{index}.png"))
+            let mut file = File::create(format!("./download/{index}.png"))
                 .expect("Failed to create screenshot file");
             file.write_all(&ss)
                 .expect("Failed to write screenshot data");
@@ -188,7 +200,7 @@ async fn download_panel_canvas(index: u16, c: &Client) -> Result<(), MainError> 
 }
 
 pub fn crop_imgs() -> Result<(), Box<dyn std::error::Error>> {
-    for (i, entry) in read_dir("download")?.enumerate() {
+    for (i, entry) in read_dir("./download")?.enumerate() {
         let entry = entry?;
         let path = entry.path();
 
@@ -219,11 +231,11 @@ fn start_gd() -> Result<Child, io::Error> {
     Ok(child)
 }
 
-fn get_manga_input() -> Result<String, io::Error> {
-    let mut input = String::new();
-    println!("\nEnter mangareader volume url.");
-    println!("Example: https://mangareader.to/read/tokyo-ghoul-108/en/volume-1");
-    io::stdin().read_line(&mut input)?;
-
-    Ok(input)
-}
+// fn get_manga_input() -> Result<String, io::Error> {
+//     let mut input = String::new();
+//     println!("\nEnter mangareader volume url.");
+//     println!("Example: https://mangareader.to/read/tokyo-ghoul-108/en/volume-1");
+//     io::stdin().read_line(&mut input)?;
+//
+//     Ok(input)
+// }

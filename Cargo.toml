@@ -4,6 +4,7 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
+base64 = "0.22.1"
 clap = { version = "4.5.20", features = ["derive"] }
 color-eyre = { version = "0.6.3", default-features = false }
 fantoccini = "0.21.2"

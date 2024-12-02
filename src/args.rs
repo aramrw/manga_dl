@@ -1,77 +1,112 @@
-use std::str::FromStr;
-
 use clap::Parser;
 use color_eyre::owo_colors::OwoColorize;
 
 use crate::error::ArgError;
 
+#[derive(Debug, Clone, Default)]
+pub enum SupportedSites {
+    #[default]
+    MangaReader,
+    MangaGun,
+}
+
 /// manga_dl Url argument
 #[derive(Debug, Clone)]
-pub struct Url(pub String);
+pub struct Url {
+    pub url: String,
+    pub title: Option<String>,
+    pub site: SupportedSites,
+}
 
 /// Arguments passed to the manga_dl cli
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
     #[arg(short, long, num_args = 1..)]
-    pub urls: Vec<Url>,
-    /// Use an absolute path instead of manga_dl exe dir
+    pub urls: Vec<String>,
+    /// Specify specific panel indexes to download from a url (ie. if they didn't download properly).
+    #[arg(long, num_args = 1..)]
+    pub indexes: Option<Vec<usize>>,
+    /// Use an absolute path to download images to. Defaults to ./download if not specified.
     #[arg(short, long)]
     pub dl_path: Option<String>,
+    #[arg(long)]
+    pub debug: bool,
 }
 
 impl Args {
-    pub fn check_urls(&mut self) -> Result<(), ArgError> {
-        for url in self.urls.iter_mut() {
-            url.check_url()?;
+    pub fn check_urls(&self) -> Result<Vec<Url>, ArgError> {
+        let mut urls = Vec::new();
+        for url in &self.urls {
+            let url = Url::from_str(url)?;
+            urls.push(url);
         }
-        Ok(())
+        Ok(urls)
     }
 }
 
 pub fn get_args() -> Result<Args, ArgError> {
-    let mut args = Args::parse();
+    let args = Args::parse();
     args.check_urls()?;
 
     Ok(args)
 }
 
-// Implement FromStr for Url so that clap can parse it as an argument
-impl FromStr for Url {
-    type Err = clap::Error;
+impl Url {
+    fn from_str(s: impl AsRef<str>) -> Result<Self, ArgError> {
+        let s = s.as_ref();
+        let valid_url_str = Url::check_url(s.to_string())?;
+        let site = Url::verify_supported_site(&valid_url_str)?;
+        let title = Url::get_title_from_valid_url(&valid_url_str, &site);
+        let url = Url {
+            url: valid_url_str,
+            title,
+            site,
+        };
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut url = Url(s.to_string());
-        url.check_url()
-            .map_err(|e| clap::Error::raw(clap::error::ErrorKind::InvalidValue, e))?;
         Ok(url)
     }
-}
 
-impl Url {
-    pub fn get_title_from_url(&self) -> Option<String> {
-        if self.0.contains("mangareader") {
-            if let Some(start) = self.0.split_once("/read/") {
-                // Extract the part after "/read/" until the next "/"
-                return Some(start.1.replace("/", "-").to_string());
+    fn verify_supported_site(url: &str) -> Result<SupportedSites, ArgError> {
+        if url.contains("mangareader") {
+            return Ok(SupportedSites::MangaReader);
+        } else if url.contains("mangagun") {
+            return Ok(SupportedSites::MangaGun);
+        }
+        Err(ArgError::WebsiteNotSupported(url.to_string()))
+    }
+
+    pub fn get_title_from_valid_url(url: &str, site: &SupportedSites) -> Option<String> {
+        match site {
+            SupportedSites::MangaReader => {
+                if let Some(start) = url.split_once("/read/") {
+                    // Extract the part after "/read/" until the next "/"
+                    return Some(start.1.replace("/", "-").to_string());
+                }
+            }
+            SupportedSites::MangaGun => {
+                if let Some(start) = url.rsplit_once("/") {
+                    return Some(start.1.to_string());
+                }
             }
         }
         None
     }
 
-    pub fn check_url(&mut self) -> Result<(), ArgError> {
-        if !self.0.contains("https://") {
-            let new_url = format!("https://{}", self.0);
-            self.0 = new_url;
+    pub fn check_url(url: String) -> Result<String, ArgError> {
+        let mut url = url;
+        if !url.contains("https://") {
+            let new_url = format!("https://{}", url);
+            url = new_url;
         }
 
-        let url = self.0.to_lowercase();
+        let url = url.to_lowercase();
 
         if !url.is_ascii() {
             return Err(ArgError::InvalidUrl {
                 url,
                 reason: "URL is not valid ASCII".bold().to_string(),
-                example: "*.com | *.to".yellow().to_string(),
+                example: "*.com | *.to | *.net".yellow().to_string(),
             });
         }
 
@@ -83,7 +118,7 @@ impl Url {
             });
         }
 
-        if !(url.contains(".to") || url.contains(".com")) {
+        if !(url.contains(".to") || url.contains(".com") || url.contains(".net")) {
             return Err(ArgError::InvalidUrl {
                 url,
                 reason: "URL is missing a valid top-level domain".bold().to_string(),
@@ -91,7 +126,7 @@ impl Url {
             });
         }
 
-        if !url.contains("mangareader.to") {
+        if !(url.contains("mangareader.to") || url.contains("mangagun.net")) {
             return Err(ArgError::WebsiteNotSupported(url));
         }
 
@@ -105,6 +140,6 @@ impl Url {
             });
         }
 
-        Ok(())
+        Ok(url)
     }
 }

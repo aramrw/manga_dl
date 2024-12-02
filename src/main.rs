@@ -1,85 +1,109 @@
 mod args;
 mod error;
+mod loading;
+mod mangagun;
 mod mangareader;
 mod test;
 
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{self, Write},
     path::Path,
     process::{Child, Command},
 };
 
+use crate::mangagun::dl_mangagun;
 use crate::mangareader::dl_mangareader;
 use args::get_args;
 use color_eyre::{eyre::Result, owo_colors::OwoColorize};
-use error::MainError;
-use fantoccini::{wd::Capabilities, Client};
+use fantoccini::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string_pretty};
 use spinners::{Spinner, Spinners};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install().unwrap();
+    let args = get_args()?;
 
     #[cfg(target_os = "windows")]
     let gd_data: &[u8] = include_bytes!("../bin/geckodriver-win.exe");
     #[cfg(target_os = "macos")]
     let gd_data: &[u8] = include_bytes!("../bin/geckodriver-macos");
 
-    let args = get_args()?;
+    let mut child = start_gd(gd_data).expect("failed to start gecko driver");
+    let c: Client = start_client(args.debug)
+        .await
+        .expect("failed to start fantoccini");
+    let mut errs: Vec<LogError> = Vec::new();
 
-    let child = start_gd(gd_data).expect("failed to start gecko driver");
-    let c: Client = start_client().await.expect("failed to start fantoccini");
-    let mut errs = Vec::new();
+    let urls = args.check_urls()?;
 
-    for url in args.urls {
-        match dl_mangareader(&c, url, args.dl_path.as_deref()).await {
-            Ok(_) => {}
-            Err(e) => errs.push(e),
-        };
+    for (i, url) in urls.into_iter().enumerate() {
+        let mut report: Option<color_eyre::Report> = None;
+        match url.site {
+            args::SupportedSites::MangaReader => {
+                if let Err(err) = dl_mangareader(&c, &url, args.dl_path.as_deref(), i).await {
+                    report = Some(err);
+                };
+            }
+            args::SupportedSites::MangaGun => {
+                if let Err(err) = dl_mangagun(&c, &url, &args).await {
+                    report = Some(err);
+                };
+            }
+        }
+        if let Some(report) = report {
+            let err = LogError {
+                url: url.url,
+                index: i,
+                error: report.to_string(),
+            };
+            errs.push(err);
+        }
     }
 
     c.close().await?;
-    cleanup(child);
+    child.kill().expect("failed to kill geckodriver");
+    child
+        .wait()
+        .expect("panicked while waiting for geckodriver to exit after attempting terminate");
+    cleanup();
 
     if !errs.is_empty() {
         let msg = format!("{} {}", errs.len().bold().red(), "errors occured".red());
         println!("{msg}");
-        for (i, e) in errs.into_iter().enumerate() {
-            write_log(i, MainError::ColorEyre(e))?;
+        for e in errs.into_iter() {
+            write_log(e)?;
         }
     }
 
     Ok(())
 }
 
-pub fn write_log(i: usize, e: MainError) -> Result<(), io::Error> {
-    let mut f = File::create("manga_dl_errors.log")?;
-    let err = json!({
-        "index": i,
-        "error": e.to_string(),
-    });
-    let err = to_string_pretty(&err)?;
+#[derive(Serialize, Deserialize, Debug)]
+pub struct LogError {
+    url: String,
+    index: usize,
+    error: String,
+}
+
+pub fn write_log(e: LogError) -> Result<(), io::Error> {
+    let mut f = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open("manga_dl_errors.log")?;
+
+    let err = to_string_pretty(&e)?;
     f.write_all(err.as_bytes())?;
     f.flush()?;
 
     Ok(())
 }
 
-pub fn cleanup(mut child: Child) {
-    let message = format!(
-        "{} {}",
-        "performing cleanup,".yellow(),
-        "do not exit the program!".red().bold()
-    );
+pub fn cleanup() {
+    let message = format!("{}..", "performing cleanup".yellow(),);
     let mut sp = Spinner::new(Spinners::Triangle, message);
-
-    child.kill().expect("Failed to kill geckodriver: {}");
-
-    child
-        .wait()
-        .expect("error while waiting for geckodriver: {}");
 
     #[cfg(target_os = "windows")]
     fs::remove_file("./temp/gd.exe").expect("failed to remove gd.exe");
@@ -113,23 +137,32 @@ pub fn start_gd(gd_data: &[u8]) -> Result<Child, std::io::Error> {
     //     std::fs::set_permissions(&temp_path, permissions)?;
     // }
 
-    let child = Command::new(temp_path).spawn()?;
+    let child = Command::new(temp_path)
+        .arg("--binary")
+        .arg("C:\\Program Files\\Mozilla Firefox\\firefox.exe")
+        .spawn()?;
 
     Ok(child)
 }
 
-async fn start_client() -> Result<fantoccini::Client, fantoccini::error::NewSessionError> {
-    let caps: Capabilities = json!({
-        "moz:firefoxOptions": {
-            "args": ["-headless"]
-        }
-    })
-    .as_object()
-    .expect("failed to serialize caps")
-    .clone();
+async fn start_client(debug: bool) -> Result<Client, fantoccini::error::NewSessionError> {
+    // Default builder
+    let mut builder = fantoccini::ClientBuilder::native();
 
-    fantoccini::ClientBuilder::native()
-        .capabilities(caps)
-        .connect("http://localhost:4444")
-        .await
+    // Conditionally add capabilities
+    if !debug {
+        let caps: serde_json::Map<String, serde_json::Value> = json!({
+            "moz:firefoxOptions": {
+                "args": ["-headless"]
+            }
+        })
+        .as_object()
+        .expect("failed to serialize caps")
+        .clone();
+
+        builder.capabilities(caps);
+    }
+
+    // Connect to the WebDriver
+    builder.connect("http://localhost:4444").await
 }

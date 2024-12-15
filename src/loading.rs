@@ -1,51 +1,51 @@
-use std::time::Duration;
+#![allow(dead_code)]
 
+use crate::style_text;
 use color_eyre::owo_colors::OwoColorize;
+use std::{fmt::Debug, time::Duration};
 
 pub fn print_indexes_arg(indexes: &Vec<usize>) {
-    println!("only downlading indexes: {:?}.", indexes);
+    println!("only downloading indexes: {:?}.", indexes);
 }
 
 pub fn downloading_panel_data_msg(i: u16, max: u16) -> String {
     format!(
-        "{} {}",
-        "downloading panel data..".bright_green(),
-        format_args!(
-            "{} / {}.",
-            (i + 1).to_string().yellow().bold(),
-            max.to_string().yellow().bold()
-        )
+        "{}",
+        //"downloading panel data..".bright_green(),
+        format_args!("{} / {}", style_text!(i + 1, url), style_text!(max, url))
     )
 }
 
 pub fn fetching_img_bytes() -> String {
-    format!("{}", "fetching img bytes...".bright_green(),)
+    style_text!("fetching img bytes")
 }
 
 pub fn indexes_failed_msg(len: usize) -> String {
     format!(
-        "{} {}",
-        len.yellow().bold(),
-        "panels failed; trying again..".red()
+        "{}: {} {}",
+        style_text!("WARNING", severe),
+        style_text!(len, bold),
+        style_text!("panels failed; trying once", error),
     )
 }
 
 pub fn print_download_complete_msg(elapsed: Duration) {
-    let msg = format!(
-        "{} in {}.",
-        "download complete".bold().bright_green(),
-        format_args!("{:?}", elapsed.yellow().bold())
-    );
-    println!("{msg}\n");
+    let elap = format!("{:.?}", elapsed);
+    // let msg = format!(
+    //     "finished in {}.",
+    //     //style_text!("download complete", success),
+    // );
+    println!("{}\n", style_text!(elap, url));
 }
 
-pub fn print_reqerr_count(count: u16, title: &str) {
+pub fn print_reqerr_count(count: usize, title: impl Debug) {
+    let title = format!("{:?}", title);
     let msg = format!(
         "{}: {} {}: {}.",
-        "WARNING".bold().red(),
-        count.bold(),
-        "errors occured while downloading".red(),
-        title.yellow().bold()
+        style_text!("\nWARNING", severe),
+        style_text!(count, bold),
+        style_text!("error(s) occured; failed on", error),
+        style_text!(title, bold)
     );
     println!("{msg}");
 }

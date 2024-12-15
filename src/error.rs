@@ -40,8 +40,18 @@ pub enum DownloadImageError {
     GetReqwest(String, String),
     #[error("could not get canvas element from selector: {0}")]
     MissingCanvasElement(String),
-    #[error("failed to find an image for the current index of: {0}")]
+    #[error("failed to find image: page number: {0};")]
     MissingImgElement(String),
+}
+
+#[derive(Error, Debug)]
+pub enum MangaReaderError {
+    #[error("{0}")]
+    Fantoccini(#[from] fantoccini::error::CmdError),
+    #[error("a new mangareader.to session didn't prompt with reading mode:\n {info}")]
+    SelectReadingMode { info: String },
+    #[error("{0}")]
+    ColorEyre(#[from] color_eyre::Report),
 }
 
 #[derive(Error, Debug)]
@@ -60,6 +70,6 @@ pub enum ArgError {
         example: String,
     },
 
-    #[error("--url argument: {0} is not a supported site\nrun with --help for a list of supported sites.")]
+    #[error("--url argument: {0} is not a supported site.\nrun with --help for a list of supported sites.")]
     WebsiteNotSupported(String),
 }

@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     let gd_data: &[u8] = include_bytes!("../bin/geckodriver-win.exe");
     #[cfg(target_os = "macos")]
     let gd_data: &[u8] = include_bytes!("../bin/geckodriver-macos");
-    // Only tested with arch
+    // only tested with arch
     #[cfg(target_os = "linux")]
     let gd_data: &[u8] = include_bytes!("../bin/geckodriver-linux");
 
@@ -175,6 +175,11 @@ pub fn start_gd(gd_data: &[u8]) -> Result<Child, std::io::Error> {
         drop(temp_file);
     }
 
+    #[cfg(target_os = "windows")]
+    let firefox_arg = "C:/Program Files/Mozilla Firefox/firefox.exe";
+    #[cfg(target_os = "linux")]
+    let firefox_arg = "/mnt/c/program files/mozilla firefox/firefox.exe";
+
     // Set execute permission (for UNIX systems)
     #[cfg(unix)]
     {
@@ -186,7 +191,7 @@ pub fn start_gd(gd_data: &[u8]) -> Result<Child, std::io::Error> {
 
     let child = Command::new(temp_path)
         .arg("--binary")
-        .arg("C:\\Program Files\\Mozilla Firefox\\firefox.exe")
+        .arg(firefox_arg)
         .spawn()?;
 
     Ok(child)

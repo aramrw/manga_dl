@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 mod cli;
 mod error;
 mod loading;
@@ -11,7 +9,7 @@ mod rawmanga;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command},
     time,
 };
@@ -29,11 +27,11 @@ use rawmanga::dl_rawmanga;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string_pretty};
 use spinners::Spinner;
+use std::os::unix::fs::PermissionsExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install().unwrap();
-    #[cfg(target_os = "windows")]
     let instant = time::Instant::now();
     let args = get_args()?;
     println!("{:#?}", args.log);
@@ -48,6 +46,9 @@ async fn main() -> Result<()> {
     let gd_data: &[u8] = include_bytes!("../bin/geckodriver-win.exe");
     #[cfg(target_os = "macos")]
     let gd_data: &[u8] = include_bytes!("../bin/geckodriver-macos");
+    // Only tested with arch
+    #[cfg(target_os = "linux")]
+    let gd_data: &[u8] = include_bytes!("../bin/geckodriver-linux");
 
     #[allow(clippy::zombie_processes)]
     let mut child = start_gd(gd_data).expect("failed to start gecko driver");
@@ -123,11 +124,38 @@ pub fn write_log(e: LogError) -> Result<(), io::Error> {
     Ok(())
 }
 
+/// cross platform way to get the path to the gecko driver
+pub fn os_get_geckodriver_exe_path() -> PathBuf {
+    #[allow(inactive_code)]
+    #[cfg(target_os = "windows")]
+    Path::from("../bin/geckodriver-win.exe");
+    #[cfg(target_os = "macos")]
+    Path::from("../bin/geckodriver-macos");
+    // Only tested with arch
+    #[cfg(target_os = "linux")]
+    PathBuf::from("../bin/geckodriver-linux")
+}
+
+// pub fn os_get_geckodriver_exe_path_if() -> PathBuf {
+//     if cfg!(target_os = "windows") {
+//         PathBuf::from("../bin/geckodriver-win.exe")
+//     } else if cfg!(target_os = "macos") {
+//         PathBuf::from("../bin/geckodriver-macos")
+//     } else if cfg!(target_os = "linux") {
+//         // Only tested with arch
+//         PathBuf::from("../bin/geckodriver-linux")
+//     } else {
+//         unreachable!()
+//     }
+// }
+
 pub fn cleanup() {
     #[cfg(target_os = "windows")]
     fs::remove_file("./temp/gd.exe").expect("failed to remove gd.exe");
     #[cfg(target_os = "macos")]
-    fs::remove_file("./temp/gd.exe").expect("failed to remove gd executable");
+    fs::remove_file("./temp/gd").expect("failed to remove gd executable");
+    #[cfg(target_os = "linux")]
+    fs::remove_file("./temp/gd").expect("failed to remove gd executable");
 
     fs::remove_dir("temp").expect("failed to remove temp dir");
 }
@@ -137,6 +165,8 @@ pub fn start_gd(gd_data: &[u8]) -> Result<Child, std::io::Error> {
     #[cfg(target_os = "windows")]
     let temp_path = Path::new("temp/gd.exe");
     #[cfg(target_os = "macos")]
+    let temp_path = Path::new("temp/gd");
+    #[cfg(target_os = "linux")]
     let temp_path = Path::new("temp/gd");
 
     if !temp_path.exists() {
@@ -148,10 +178,10 @@ pub fn start_gd(gd_data: &[u8]) -> Result<Child, std::io::Error> {
     // Set execute permission (for UNIX systems)
     #[cfg(unix)]
     {
-        let metadata = std::fs::metadata(&temp_path)?;
+        let metadata = std::fs::metadata(temp_path)?;
         let mut permissions = metadata.permissions();
         permissions.set_mode(0o755); // Make the file executable
-        std::fs::set_permissions(&temp_path, permissions)?;
+        std::fs::set_permissions(temp_path, permissions)?;
     }
 
     let child = Command::new(temp_path)
